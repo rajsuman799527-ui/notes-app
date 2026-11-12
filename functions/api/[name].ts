@@ -372,4 +372,31 @@ const handlers: Record<string, (db: DB, i: In) => Promise<any>> = {
       const cols = Object.keys(d);
       await exec(db,
         `INSERT INTO headMoveSettings (id,uid${cols.map((c) => ',' + c).join('')}) VALUES (?,?${cols.map(() => ',?').join('')})
-         ON CONFLICT(uid) DO UPDATE SET uid=excluded.uid${cols.map((c) => `,${c}=excluded.${
+                  ON CONFLICT(uid) DO UPDATE SET uid=excluded.uid${cols.map((c) => `,${c}=excluded.${c}`).join('')}`,
+        uuid(), uid, ...cols.map((c) => d[c]));
+    }
+    if (Array.isArray(i.moves)) {
+      const stmts = [db.prepare('DELETE FROM headMoves WHERE uid=?').bind(uid)];
+      for (const m of i.moves) {
+        stmts.push(
+          db.prepare('INSERT INTO headMoves (id,uid,positionId,message,enabled,sensitivity) VALUES (?,?,?,?,?,?)')
+            .bind(uuid(), uid, cleanText(m.positionId, 40), cleanText(m.message, 200), m.enabled ? 1 : 0, m.sensitivity ?? null)
+        );
+      }
+      await batch(db, stmts);
+    }
+    return { ok: true };
+  },
+};
+
+export const onRequestPost = async ({ request, env, params }: any) => {
+  const name = String(params.name || '');
+  const fn = Object.prototype.hasOwnProperty.call(handlers, name) ? handlers[name] : null;
+  if (!fn) return Response.json({ error: 'Not found' }, { status: 404 });
+  try {
+    const input = await request.json().catch(() => ({}));
+    return Response.json(await fn(env.DB, input || {}));
+  } catch (e: any) {
+    return Response.json({ error: e?.message || 'Error' }, { status: 400 });
+  }
+};
